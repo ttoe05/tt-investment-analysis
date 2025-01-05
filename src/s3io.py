@@ -134,11 +134,11 @@ class S3IO():
             example ->  file/located/here.csv
         """
         # Check if the path for the file exists
-        split_path = file_path.split("/")[:-1]
-        path = "/".join(split_path)
-        if not self.s3_is_dir(path):
-            logging.error(f"The given path does not exist: {path}")
-            raise ValueError("Please pass a valid path")
+        # split_path = file_path.split("/")[:-1]
+        # path = "/".join(split_path)
+        # if not self.s3_is_dir(path):
+        #     logging.error(f"The given path does not exist: {path}")
+        #     raise ValueError("Please pass a valid path")
         # Create a temp file locally using df and load to the path s3
         with tempfile.NamedTemporaryFile(delete=True, mode='r+') as temp:
             df.write_parquet(f"{temp.name}.parq")
