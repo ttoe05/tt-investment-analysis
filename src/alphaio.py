@@ -1,6 +1,7 @@
 import requests
+import polars as pl
 import logging
-from alpha_utils import get_alpha_key
+from alpha_utils import get_alpha_key, parse_data
 
 
 class AlphaIO:
@@ -18,7 +19,14 @@ class AlphaIO:
         self.BASE_URL = 'https://www.alphavantage.co/query?function='
         self.request_count = 0
 
-    def get_statement(self, ticker: str, statement: str | list=['income', 'balance', 'cash']) -> list[dict]:
+    def _alpha_request(self, ticker: str, statement: str, api_key:str) -> dict:
+        """
+        Make a request to the AlphaVantage API
+        """
+        request_url = f'{self.BASE_URL}{statement}&symbol={ticker}&apikey={api_key}'
+        return requests.get(request_url).json()
+
+    def get_statement(self, ticker: str, statement: str | list) -> dict[pl.DataFrame]:
         """
         Get income statement for a given ticker
         Parameters
@@ -37,18 +45,19 @@ class AlphaIO:
             'balance': 'BALANCE_STATEMENT',
             'cash': 'CASH_FLOW'
         }
-        financials = []
+        financials = {}
         if isinstance(statement, list):
 
-            for financial_statment in statement:
-                request_url = f'{self.BASE_URL}{statement_dict[financial_statment]}&symbol={ticker}&apikey={api_key}'
-                data = requests.get(request_url).json()
-                financials.append(data)
+            for financial_statement in statement:
+                data = self._alpha_request(ticker=ticker, statement=statement_dict[financial_statement], api_key=api_key)
+                # parse the data
+                df = parse_data(data=data[0]['quarterlyReports'], str_cols=['fiscalDateEnding', 'reportedCurrency'])
+                financials[financial_statement] = df
                 self.request_count += 1
         else:
-            request_url = f'{self.BASE_URL}{statement_dict[statement]}&symbol={ticker}&apikey={api_key}'
-            data = requests.get(request_url).json()
-            financials.append(data)
+            data = self._alpha_request(ticker=ticker, statement=statement, api_key=api_key)
+            df = parse_data(data=data[0]['quarterlyReports'], str_cols=['fiscalDateEnding', 'reportedCurrency'])
+            financials[statement] = df
             self.request_count += 1
         return financials
 
