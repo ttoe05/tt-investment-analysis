@@ -163,6 +163,15 @@ def run_end_to_end(target: pl.DataFrame,
     return target
 
 
+def list_local_files(file_path: str) -> list:
+    """
+    List all the files in a local directory and return a list of files
+    """
+    return [x for x in os.listdir(file_path) if x.endswith(".csv")]
+
+
+
+
 
 
 
