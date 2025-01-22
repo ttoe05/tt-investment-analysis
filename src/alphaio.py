@@ -1,7 +1,7 @@
 import requests
 import polars as pl
 import logging
-from alpha_utils import get_alpha_key, parse_data, run_end_to_end
+from alpha_utils import get_alpha_key, parse_data, run_end_to_end, get_bucket_name
 from s3io import S3IO
 
 
@@ -13,14 +13,16 @@ class AlphaIO:
     - pull profiles for ETFs
     - pull corporate actions for dividends
     """
-    def __init__(self, tickers: list | pl.series):
+    def __init__(self, tickers: any):
         """
         Initialize the AlphaIO class
         """
         self.BASE_URL = 'https://www.alphavantage.co/query?function='
         self.request_count = 0
         self.tickers = tickers
-        self.s3 = S3IO
+        # get bucket name
+        bucket = get_bucket_name()
+        self.s3 = S3IO(bucket=bucket)
         self.ticker_tracking_dict = {}
 
     def _alpha_request(self, ticker: str, statement: str, api_key:str) -> dict:
@@ -142,11 +144,13 @@ class AlphaIO:
                                                                        'cash'])
             # get the target data
             target_data = self.get_target_data(ticker=ticker)
-            self.write_data(ticker=ticker,
-                            target_financials=target_data,
-                            source_financials=source_data)
-
-
+            if target_data is None and source_data is None:
+                logging.warning(f"Missing target and source data for ticker {ticker}, skipping ...")
+                continue
+            else:
+                self.write_data(ticker=ticker,
+                                target_financials=target_data,
+                                source_financials=source_data)
 
 
 if __name__ == '__main__':

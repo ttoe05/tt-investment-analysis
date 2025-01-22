@@ -51,7 +51,6 @@ class S3IO():
         self.s3_client = session.client('s3')
         self.s3_resource = session.resource('s3')
 
-
     def s3_is_dir(self,
                   path: str) -> bool:
         """

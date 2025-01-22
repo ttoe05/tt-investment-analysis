@@ -4,7 +4,7 @@ A data object that keeps track of all the stocks that have been persisted for th
 import polars as pl
 import logging
 from alphaio import AlphaIO
-from alpha_utils import list_local_files, run_end_to_end
+from alpha_utils import list_local_files, run_end_to_end, get_bucket_name, init_logger
 from datetime import datetime
 from s3io import S3IO
 
@@ -24,7 +24,10 @@ class StockTracker:
         self.ticker_queue_table = "stock_tracker/tickers_queue.parq"
         self.ticker_queue = None
         self.alphaio = None
-        self.s3 = S3IO()
+
+        # get bucket name
+        bucket = get_bucket_name()
+        self.s3 = S3IO(bucket=bucket)
 
     def _market_cap_define(self) -> None:
         """
@@ -57,6 +60,7 @@ class StockTracker:
     def get_stock_list_locally(self, file_path: str|list):
         """
         get the list of stocks from a config file, that initiliazes the tracker
+        assumes data came NASDAQ
         """
         if isinstance(file_path, list):
             dfs = []
@@ -69,7 +73,7 @@ class StockTracker:
 
             self.df_source = pl.read_csv(file_path)
         # return only the needed columns
-        self.df_source = self.df.select([
+        self.df_source = self.df_source.select([
             'Symbol', 'Name', 'Market Cap', 'Country', 'IPO Year', 'Sector', 'Industry'
         ])
         self._market_cap_define()
@@ -82,7 +86,7 @@ class StockTracker:
         # get data from target
         try:
             self.df_target = self.s3.s3_read_parquet(file_path=self.ticker_table)
-            logging.info(f"successfully loaded stock_tracker data from s3")
+            logging.info(f"successfully loaded stock_tracker data from s3: {self.df_target.head()}")
         except Exception as e:
             logging.warning(f"Could not find target data, setting target equal to source {e}")
             self.df_target = self.df_source
@@ -91,6 +95,15 @@ class StockTracker:
                 pl.lit(datetime.now(), dtype=pl.Datetime).alias('updated_time')
             )
 
+    def get_queue_total(self) -> list[str]:
+        """
+        Get the total number of items in the queue
+        """
+        return self.ticker_queue.filter(
+            pl.col('Downloaded') == False,
+            pl.col('Download_Failed') == False
+        ).select("Symbol").to_series().len()
+
     def _get_ticker_queue(self) -> None:
         """
         Get the ticker queue which is a dataframe
@@ -98,6 +111,10 @@ class StockTracker:
         # check if the queue is initialized in s3
         try:
             self.ticker_queue = self.s3.s3_read_parquet(file_path=self.ticker_queue_table)
+            logging.info(f"successfully loaded ticker queue from s3: {self.ticker_queue.head()}")
+            logging.info(
+                f"total amount of items in queue: {len(self.get_queue_total())}")
+
         except Exception as e:
             logging.warning(f"queue file does not exist, initializing the queue using target data\n{e}")
             self.ticker_queue = self.df_target.select(["Symbol"])
@@ -107,10 +124,16 @@ class StockTracker:
                 pl.lit(False, dtype=pl.Boolean).alias('Downloaded'),
                 pl.Lit(False, dtype=pl.Boolean).alias('Download_Failed')
             )
+            logging.info(
+                f"total amount of items in queue: {len(self.get_queue_total())}")
 
     def update_queue(self, tickers: list, val: bool):
         """
-        update the queue table by ticker
+        update queries for the ticker queue dataframe.
+        tickers: list[str]
+            list of tickers that had either bad or good downloads
+        val: bool
+            indicates if the downloaded tickers were successful or not
         """
         # update the download flag to true
         if val:
@@ -152,7 +175,6 @@ class StockTracker:
         self.s3.s3_write_parquet(df=self.ticker_queue,
                                  file_path=self.ticker_queue_table)
 
-
     def run(self) -> None:
         """
         The main run of stock tracker logical flow to return the stocks for retrieving data from alpha vantage
@@ -172,15 +194,15 @@ class StockTracker:
             self.get_stock_list_locally(file_path=source_files) # sets the source
         self._get_target() # sets the target if not in s3 initiliaze the dataframe
         # update or insert the records from the source and target
-        self.df_target = run_end_to_end(target=self.df_target, source=self.df_source, id_col="Symbol")
+        if self.df_target is not None:
+            # no need to run the process if there is no target table already set as the source
+            self.df_target = run_end_to_end(target=self.df_target, source=self.df_source, id_col="Symbol")
         # write the target data to s3
         self.s3.s3_write_parquet(self.df_target, file_path=self.ticker_table)
         # get the queue
         self._get_ticker_queue()
         # get the list of stocks for downloading
-        tickers = self.ticker_queue.filter(
-            pl.col('Downloaded') == False
-        ).head(8).select("Symbol").to_series()
+        tickers = self.get_queue_total()[:8]
         # pass the list of tickers to the alpha io object
         self.alphaio = AlphaIO(tickers=tickers)
         # run the alphaio object
@@ -188,30 +210,10 @@ class StockTracker:
         self.write_ticker_queue(download_dict=self.alphaio.ticker_tracking_dict)
 
 
-
-
-
-
-
-
-
-
-
-
-
 if __name__ == '__main__':
 
-    files = [
-        'data/NYSE_Utilites.csv',
-        'data/NYSE_basic_materials.csv'
-    ]
-
-    for file in files:
-        stock_tracker = StockTracker()
-        stock_tracker.get_stock_list(file_path=file)
-        stock_tracker.market_cap_define()
-        print(stock_tracker.df.columns)
-        print(stock_tracker.df.head())
-        print(stock_tracker.df.select([pl.col("Market Cap Name").value_counts(sort=True),]).unnest('Market Cap Name'))
+    init_logger("stock_tracker.log")
+    stock_tracker = StockTracker()
+    stock_tracker.run()
 
 
