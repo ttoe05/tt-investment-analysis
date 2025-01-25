@@ -40,6 +40,13 @@ def get_alpha_key() -> str:
     return os.environ['ALPHA_VANTAGE_API']
 
 
+def get_alpha_key2() -> str:
+    """
+    get alphaVantage API key 2
+    """
+    return os.environ['ALPHA_VANTAGE_API2']
+
+
 def parse_data(data: list[dict], str_cols: list[str]) -> pl.DataFrame:
     """
     Parse the data from the API
@@ -116,26 +123,28 @@ def update_records(
     Returns:
     pl.DataFrame: The updated target data frame
     """
+    # get the source columns
+
     # find the records that differ between the two data frames
     diff = source.join(target, on=on, suffix='_df2').filter(pl.any_horizontal(
         pl.col(x).ne_missing(pl.col(f"{x}_df2"))
-        for x in source.columns if x != 'fiscalDateEnding')).select(source.columns)
+        for x in source.columns if x != on)).select(source.columns)
     # add the update time and is_current flag to the df_diff
     diff = diff.with_columns(
         pl.lit(True).alias("is_current"),
         pl.lit(update_time).alias("update_time")
     )
     # get the list of fiscalDateEnding that are in the df_diff
-    date_list = diff.select('fiscalDateEnding').to_series()
+    on_list = diff.select(on).to_series()
     # update the is current flag for the old records
     df_updated = target.with_columns(
-        is_current=pl.when(pl.col('fiscalDateEnding').is_in(date_list))
+        is_current=pl.when(pl.col(on).is_in(on_list))
         .then(pl.lit(False))
         .otherwise(pl.col('is_current')))
     # concat the two data frames and order by fiscalDateEnding
-    print(f"Shape of target: {df_updated.shape}")
-    print(f"Shape of diff: {diff.shape}")
-    df_updated = pl.concat([df_updated, diff.select(df_updated.columns)]).sort('fiscalDateEnding')
+    logging.info(f"Shape of target: {df_updated.shape}")
+    logging.info(f"Shape of diff: {diff.shape}")
+    df_updated = pl.concat([df_updated, diff.select(df_updated.columns)]).sort(on)
     return df_updated
 
 
@@ -196,7 +205,7 @@ def list_local_files(file_path: str) -> list[str]:
     """
     List all the files in a local directory and return a list of files
     """
-    return [f"{file_path}/{x}" for x in os.listdir(file_path) if x.endswith(".csv")]
+    return [f"{file_path}/{x}" for x in os.listdir(file_path) if x.endswith(".csv") or x.endswith(".parq")]
 
 
 def get_bucket_name() -> str:
@@ -205,6 +214,12 @@ def get_bucket_name() -> str:
     """
     return os.environ["S3_ARB_BUCKET"]
 
+
+def get_profile_name() -> str:
+    """
+    Get the profile name
+    """
+    return os.environ["S3_PROFILE"]
 
 
 

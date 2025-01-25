@@ -1,7 +1,9 @@
 import requests
 import polars as pl
 import logging
-from alpha_utils import get_alpha_key, parse_data, run_end_to_end, get_bucket_name
+from datetime import datetime
+from alpha_utils import (get_alpha_key, parse_data, run_end_to_end,
+                         get_bucket_name, get_profile_name, get_alpha_key2)
 from s3io import S3IO
 
 
@@ -22,7 +24,8 @@ class AlphaIO:
         self.tickers = tickers
         # get bucket name
         bucket = get_bucket_name()
-        self.s3 = S3IO(bucket=bucket)
+        profile = get_profile_name()
+        self.s3 = S3IO(bucket=bucket, profile=profile)
         self.ticker_tracking_dict = {}
 
     def _alpha_request(self, ticker: str, statement: str, api_key:str) -> dict:
@@ -30,9 +33,13 @@ class AlphaIO:
         Make a request to the AlphaVantage API
         """
         request_url = f'{self.BASE_URL}{statement}&symbol={ticker}&apikey={api_key}'
-        return requests.get(request_url).json()
+        r = requests.get(request_url)
+        data = r.json()
+        return data
 
-    def get_statement(self, ticker: str, statement: str | list) -> dict[str: pl.DataFrame]:
+    def get_statement(self, ticker: str,
+                      api_key: str,
+                      statement: str | list) -> dict[str: pl.DataFrame]:
         """
         Get income statement for a given ticker
         Parameters
@@ -45,10 +52,10 @@ class AlphaIO:
         :return:s
         """
         ticker = ticker.upper()
-        api_key = get_alpha_key()
+        # api_key = get_alpha_key()
         statement_dict = {
             'income': 'INCOME_STATEMENT',
-            'balance': 'BALANCE_STATEMENT',
+            'balance': 'BALANCE_SHEET',
             'cash': 'CASH_FLOW'
         }
         financials = {}
@@ -57,8 +64,9 @@ class AlphaIO:
             for financial_statement in statement:
                 try:
                     data = self._alpha_request(ticker=ticker, statement=statement_dict[financial_statement], api_key=api_key)
+                    logging.info(f"data retrieved for {ticker}")
                     # parse the data
-                    df = parse_data(data=data[0]['quarterlyReports'], str_cols=['fiscalDateEnding', 'reportedCurrency'])
+                    df = parse_data(data=data['quarterlyReports'], str_cols=['fiscalDateEnding', 'reportedCurrency'])
                     financials[financial_statement] = df
                     self.request_count += 1
                 except Exception as e:
@@ -119,7 +127,13 @@ class AlphaIO:
             # check if the target financial is null
             if target_financials[statement] is None:
                 logging.warning(f"Missing target, initializing the {statement} statements for {ticker}")
+                update_time = datetime.now()
                 target_financials[statement] = source_financials[statement]
+                # add the is_current and update_time columns
+                target_financials[statement] = target_financials[statement].with_columns(
+                        pl.lit(True).alias("is_current"),
+                        pl.lit(update_time).alias("update_time")
+                    )
                 self.ticker_tracking_dict[ticker] = True
             else:
                 # run the end to end
@@ -137,11 +151,26 @@ class AlphaIO:
         return a dict with the key as the ticker and the value as a boolean representing the
         process of retrieving the data has been completed
         """
+        # split the  tickers list in half then pass the api keys
+        api_key = get_alpha_key()
+        api_key2 = get_alpha_key2()
+        split_number = int(len(self.tickers) / 2)
+        counter = 0
         for ticker in self.tickers:
-            # get the source data
-            source_data = self.get_statement(ticker=ticker, statement=['income',
-                                                                       'balance',
-                                                                       'cash'])
+            if counter < split_number:
+                # get the source data
+                source_data = self.get_statement(ticker=ticker,
+                                                 api_key=api_key,
+                                                 statement=['income',
+                                                            'balance',
+                                                            'cash'])
+            else: # use the second api key
+                # get the source data
+                source_data = self.get_statement(ticker=ticker,
+                                                 api_key=api_key2,
+                                                 statement=['income',
+                                                            'balance',
+                                                            'cash'])
             # get the target data
             target_data = self.get_target_data(ticker=ticker)
             if target_data is None and source_data is None:
