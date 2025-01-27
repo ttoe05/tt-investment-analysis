@@ -37,14 +37,7 @@ def get_alpha_key() -> str:
     get alphaVantage API key
     :return:
     """
-    return os.environ['ALPHA_VANTAGE_API']
-
-
-def get_alpha_key2() -> str:
-    """
-    get alphaVantage API key 2
-    """
-    return os.environ['ALPHA_VANTAGE_API2']
+    return os.environ['ALPHA_VANTAGE_API'], os.environ['ALPHA_VANTAGE_API2']
 
 
 def parse_data(data: list[dict], str_cols: list[str]) -> pl.DataFrame:

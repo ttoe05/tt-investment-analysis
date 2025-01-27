@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """"
 A data object that keeps track of all the stocks that have been persisted for the given quarter
 """
@@ -272,13 +273,15 @@ class StockTracker:
             logging.warning("No source and target data, closing ...")
         else:  # if no source or target data simply exit
             # update or insert the records from the source and target
-            if not (self.df_target.sort(pl.col("Symbol"),
-                                        descending=False).select(self.df_source.columns)
+            if not (self.df_target.filter(pl.col("is_current") == True).sort(pl.col("Symbol"),
+                                                                             descending=False)
+                    .select(self.df_source.columns)
                     .equals(self.df_source.sort(pl.col("Symbol"),
                             descending=False))):
                 logging.info(f"Source and target data are not the same for the ticker data, updating ...")
                 # no need to run the process if target equals the source
-                self.df_target = run_end_to_end(target=self.df_target, source=self.df_source, id_col="Symbol",
+                target_tmp = self.df_target.filter(pl.col("is_current") == True)
+                self.df_target = run_end_to_end(target=target_tmp, source=self.df_source, id_col="Symbol",
                                                 update_time=datetime.now())
             logging.info(f"Size of the target being written to s3, {self.df_target.shape}")
             # write the target data to s3

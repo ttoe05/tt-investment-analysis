@@ -3,7 +3,7 @@ import polars as pl
 import logging
 from datetime import datetime
 from alpha_utils import (get_alpha_key, parse_data, run_end_to_end,
-                         get_bucket_name, get_profile_name, get_alpha_key2)
+                         get_bucket_name, get_profile_name)
 from s3io import S3IO
 
 
@@ -66,7 +66,12 @@ class AlphaIO:
                     data = self._alpha_request(ticker=ticker, statement=statement_dict[financial_statement], api_key=api_key)
                     logging.info(f"data retrieved for {ticker}")
                     # parse the data
-                    df = parse_data(data=data['quarterlyReports'], str_cols=['fiscalDateEnding', 'reportedCurrency'])
+                    try:
+                        df = parse_data(data=data['quarterlyReports'], str_cols=['fiscalDateEnding', 'reportedCurrency'])
+                    except Exception as e:
+                        logging.warning(f"{ticker} has no quarterly reports, persisting annual report data")
+                        df = parse_data(data=data['annualReports'],
+                                        str_cols=['fiscalDateEnding', 'reportedCurrency'])
                     financials[financial_statement] = df
                     self.request_count += 1
                 except Exception as e:
@@ -137,7 +142,8 @@ class AlphaIO:
                 self.ticker_tracking_dict[ticker] = True
             else:
                 # run the end to end
-                target_financials[statement] = run_end_to_end(target=target_financials[statement],
+                target_tmp = target_financials[statement].filter(pl.col("is_current") == True)
+                target_financials[statement] = run_end_to_end(target=target_tmp,
                                                               source=source_financials[statement],
                                                               id_col='fiscalDateEnding')
                 self.ticker_tracking_dict[ticker] = True
@@ -152,8 +158,7 @@ class AlphaIO:
         process of retrieving the data has been completed
         """
         # split the  tickers list in half then pass the api keys
-        api_key = get_alpha_key()
-        api_key2 = get_alpha_key2()
+        api_key, api_key2 = get_alpha_key()
         split_number = int(len(self.tickers) / 2)
         counter = 0
         for ticker in self.tickers:
@@ -171,6 +176,7 @@ class AlphaIO:
                                                  statement=['income',
                                                             'balance',
                                                             'cash'])
+            counter += 1
             # get the target data
             target_data = self.get_target_data(ticker=ticker)
             if target_data is None and source_data is None:
