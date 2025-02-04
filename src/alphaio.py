@@ -164,6 +164,7 @@ class AlphaIO:
         for ticker in self.tickers:
             if counter < split_number:
                 # get the source data
+                logging.info(f"Using the first api key for {ticker}")
                 source_data = self.get_statement(ticker=ticker,
                                                  api_key=api_key,
                                                  statement=['income',
@@ -171,6 +172,7 @@ class AlphaIO:
                                                             'cash'])
             else: # use the second api key
                 # get the source data
+                logging.info(f"Using the second api key for {ticker}")
                 source_data = self.get_statement(ticker=ticker,
                                                  api_key=api_key2,
                                                  statement=['income',
