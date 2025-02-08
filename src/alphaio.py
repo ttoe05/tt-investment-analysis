@@ -5,6 +5,7 @@ from datetime import datetime
 from alpha_utils import (get_alpha_key, parse_data, run_end_to_end,
                          get_bucket_name, get_profile_name)
 from s3io import S3IO
+from multiprocessing import Queue
 
 
 class AlphaIO:
@@ -23,9 +24,9 @@ class AlphaIO:
         self.request_count = 0
         self.tickers = tickers
         # get bucket name
-        bucket = get_bucket_name()
-        profile = get_profile_name()
-        self.s3 = S3IO(bucket=bucket, profile=profile)
+        # bucket = get_bucket_name()
+        # profile = get_profile_name()
+        # self.s3 = S3IO(bucket=bucket, profile=profile)
         self.ticker_tracking_dict = {}
 
     def _alpha_request(self, ticker: str, statement: str, api_key:str) -> dict:
@@ -96,9 +97,13 @@ class AlphaIO:
         """
         financials = {}
         statements = ["cash", "income", "balance"]
+        # get bucket name
+        bucket = get_bucket_name()
+        profile = get_profile_name()
+        s3 = S3IO(bucket=bucket, profile=profile)
         for statement in statements:
             try:
-                df_statement = self.s3.s3_read_parquet(file_path=f"{statement}/{ticker}/{statement}.parq")
+                df_statement = s3.s3_read_parquet(file_path=f"{statement}/{ticker}/{statement}.parq")
                 financials[statement] = df_statement
             except Exception as e:
                 logging.warning(f"Missing data for statement {statement} for ticker {ticker}, initializing ...\n{e}")
@@ -123,6 +128,10 @@ class AlphaIO:
         source_financials: dict[str: pl.DataFrame]
             dictionary of source data frames
         """
+        # get bucket name
+        bucket = get_bucket_name()
+        profile = get_profile_name()
+        s3 = S3IO(bucket=bucket, profile=profile)
         for statement in target_financials.keys():
             # check if the source financial is None
             if source_financials[statement] is None:
@@ -148,10 +157,10 @@ class AlphaIO:
                                                               id_col='fiscalDateEnding')
                 self.ticker_tracking_dict[ticker] = True
             # write the data to s3 in specified location
-            self.s3.s3_write_parquet(df=target_financials[statement],
-                                     file_path=f"{statement}/{ticker}/{statement}.parq")
+            s3.s3_write_parquet(df=target_financials[statement],
+                                file_path=f"{statement}/{ticker}/{statement}.parq")
 
-    def run(self) -> None:
+    def run(self, q: Queue = None) -> None:
         """
         run the end-to-end process of the alphio
         return a dict with the key as the ticker and the value as a boolean representing the
@@ -188,6 +197,8 @@ class AlphaIO:
                 self.write_data(ticker=ticker,
                                 target_financials=target_data,
                                 source_financials=source_data)
+        if q is not None:
+            q.put(self.ticker_tracking_dict)
 
 
 if __name__ == '__main__':

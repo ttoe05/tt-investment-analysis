@@ -8,6 +8,9 @@ from alphaio import AlphaIO
 from alpha_utils import list_local_files, run_end_to_end, get_bucket_name, init_logger, get_profile_name
 from datetime import datetime
 from s3io import S3IO
+from multiprocessing import Process, Queue
+from functools import reduce
+from time import time
 
 SCHEMA_DEF = {
     'Symbol': pl.String,
@@ -26,7 +29,7 @@ class StockTracker:
     data object to keep track of the stocks that have been persisted
     """
 
-    def __init__(self, queue_depth=16):
+    def __init__(self, queue_depth=4):
         """
         initialize the object
         """
@@ -250,9 +253,30 @@ class StockTracker:
             logging.info(f"No items in the queue resetting queue ...")
             self.reset_queue()
 
-    def run(self) -> None:
+    def get_multiprocessing_objects(self, num_cores: int, tickers: list[str]) -> list[AlphaIO]:
+        """
+        Returns a list of AlphaIO objects that will be ran concurrently
+        num_cores: int
+            number of cores to use
+        tickers: list[str]
+            The list of tickers to pull data for concurrently
+        """
+        # split the list of tickers into chunks of size num_cores
+        sub_groups = round(len(tickers) / num_cores)
+        tickers_sub_list = [tickers[i:i + sub_groups] for i in range(0, len(tickers), sub_groups)]
+        logging.info(f"Created sublist of tickers for multiprocessing: {tickers_sub_list}")
+        # create the list of alphio objects
+        return [
+            AlphaIO(tickers=t) for t in tickers_sub_list
+        ]
+
+    def run(self, num_cores: int = None) -> float:
         """
         The main run of stock tracker logical flow to return the stocks for retrieving data from alpha vantage
+
+        num_cores: int
+        The number of cores to use for multiprocessing to run program concurrently.
+        By default it will perform single processing
 
         1. check locally if source data is available for updating or initializing the target ticker table
         2. Check if the data in s3 needs initializing, initialize if not
@@ -262,6 +286,7 @@ class StockTracker:
 
         """
         # check if local files are available
+        start_time = time()
         source_files = list_local_files(file_path='data')
         if len(source_files) > 0:
             # get the source data
@@ -294,17 +319,72 @@ class StockTracker:
             self.insert_new_queue_records()
             tickers = self.get_queue_total()[:self.queue_depth]
             # pass the list of tickers to the alpha io object
-            self.alphaio = AlphaIO(tickers=tickers)
-            # run the alphaio object
-            self.alphaio.run()
-            self.write_ticker_queue(download_dict=self.alphaio.ticker_tracking_dict)
-        logging.info(f"Finished")
+            if num_cores is None:
+                self.alphaio = AlphaIO(tickers=tickers)
+                # run the alphaio object
+                self.alphaio.run()
+                self.write_ticker_queue(download_dict=self.alphaio.ticker_tracking_dict)
+            else:
+                logging.info(f"Number of cores is {num_cores}, running concurrently")
+                # Create the alpaio objects
+                alphaio_list = self.get_multiprocessing_objects(num_cores=num_cores, tickers=tickers)
+                q = Queue()
+                # create the processes
+                processes = []
+                # processes = [
+                #     Process(target=a.run, args=q).run() for a in alphaio_list
+                # ]
+                for a in alphaio_list:
+                    p = Process(target=a.run, args=(q,))
+                    processes.append(p)
+                    p.start()
+
+                for p in processes:
+                    p.join()
+                download_results = [q.get() for _ in range(num_cores)]
+                logging.info(f"Recieved the downloaded results from the {num_cores} cores\n{download_results}")
+                # merge the list of dictionaries and update the ticker que
+                download_results_dict = reduce(lambda a, b: {**a, **b}, download_results)
+                self.write_ticker_queue(download_dict=download_results_dict)
+        end_time = time()
+        process_time = end_time - start_time
+        logging.info(f"Finished in {process_time}")
+        return process_time
 
 
 if __name__ == '__main__':
 
     init_logger("stock_tracker.log")
-    stock_tracker = StockTracker()
-    stock_tracker.run()
+    stock_tracker = StockTracker(queue_depth=16)
+    stock_tracker.run(num_cores=4)
+
+    # num_cores = [
+    #     6, #4, 6
+    # ]
+    # queue_depth = [
+    #     42, #16, 42
+    # ]
+    #
+    # results = []
+    #
+    # for num_core in num_cores:
+    #     for depth in queue_depth:
+    #         # initialize the stock tracker
+    #         record = {}
+    #         if num_core is None:
+    #             record['processing'] = 'Standard'
+    #         else:
+    #             record['processing'] = f'Multiprocessing: {num_core} cores'
+    #         record['Number of Symbols Processed'] = depth
+    #         stock_tracker = StockTracker(queue_depth=depth)
+    #         time_sec = stock_tracker.run(num_cores=num_core)
+    #         record['Time Elapsed'] = time_sec
+    #         results.append(record)
+    #
+    # df_result = pl.DataFrame(results)
+    # print(df_result)
+    # df_result.write_parquet('results/stock_tracker_multi642.parq')
+
+
 
 
