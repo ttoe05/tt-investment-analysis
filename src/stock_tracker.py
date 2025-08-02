@@ -39,7 +39,7 @@ class StockTracker:
         self.ticker_table = "stock_tracker/tickers.parq"
         self.ticker_queue_table = "stock_tracker/tickers_queue.parq"
         self.ticker_queue = None
-        self.alphaio = None
+        # self.alphaio = None
 
         # get bucket name
         bucket = get_bucket_name()
@@ -320,10 +320,10 @@ class StockTracker:
             tickers = self.get_queue_total()[:self.queue_depth]
             # pass the list of tickers to the alpha io object
             if num_cores is None:
-                self.alphaio = AlphaIO(tickers=tickers)
+                alphaio = AlphaIO(tickers=tickers)
                 # run the alphaio object
-                self.alphaio.run()
-                self.write_ticker_queue(download_dict=self.alphaio.ticker_tracking_dict)
+                alphaio.run()
+                self.write_ticker_queue(download_dict=alphaio.ticker_tracking_dict)
             else:
                 logging.info(f"Number of cores is {num_cores}, running concurrently")
                 # Create the alpaio objects
@@ -355,8 +355,8 @@ class StockTracker:
 if __name__ == '__main__':
 
     init_logger("stock_tracker.log")
-    stock_tracker = StockTracker(queue_depth=16)
-    stock_tracker.run(num_cores=4)
+    stock_tracker = StockTracker(queue_depth=1)
+    stock_tracker.run(num_cores=None)
 
     # num_cores = [
     #     6, #4, 6
